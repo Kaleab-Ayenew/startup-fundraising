@@ -5,7 +5,7 @@ from passlib.context import CryptContext
 from fastapi import HTTPException, status, Depends
 from fastapi.security import OAuth2PasswordBearer
 from .database import SessionLocal, engine
-from . import models
+from . import models, utils
 
 # Secret key for signing the JWT
 SECRET_KEY = "your-secret-key"  # Use a strong secret key
@@ -29,9 +29,7 @@ fake_users_db = {
 }
 
 
-# Utility function to verify passwords
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+# Utility function to verify password
 
 
 # Utility function to hash passwords
@@ -48,13 +46,16 @@ def get_user(db, email: str, user_type: str):
     }
     user_model = user_model_map.get(user_type)
     with SessionLocal() as db:
-        return db.query(user_model.email == email).one()
+        result =  db.query(user_model).filter(user_model.email == email).first()
+    # print(result.__dict__)
+    return result
 
 
 # Authenticate user and verify credentials
-def authenticate_user(email: str, password: str):
-    user = get_user(fake_users_db, email)
-    if not user or not verify_password(password, user["hashed_password"]):
+def authenticate_user(email: str, password: str, user_type: str):
+    user = get_user(fake_users_db, email, user_type)
+    print("Here are the results for user query", user)
+    if not user or not utils.verify_password(password, user.password):
         return False
     return user
 

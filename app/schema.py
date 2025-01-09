@@ -1,9 +1,14 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
+from datetime import datetime
 
 class User(BaseModel):
     email: EmailStr
     name: str
+
+class SignInSchema(BaseModel):
+    email: EmailStr
+    password: str
 
 # =======================#
 #   Founder Schemas      #
@@ -79,6 +84,7 @@ class ProjectUpdate(BaseModel):
     description: Optional[str] = None
     target_amount: Optional[float] = None
     image_url: Optional[str] = None
+    status: Optional[str] = None
 
 class ProjectOut(BaseModel):
     id: int
@@ -116,6 +122,7 @@ class InvestmentOut(BaseModel):
 # =======================#
 class UpdateCreate(BaseModel):
     project_id: int
+    title: str
     content: str
 
 class UpdateUpdate(BaseModel):
@@ -125,6 +132,8 @@ class UpdateOut(BaseModel):
     id: int
     content: str
     project_id: int
+    title: str
+    created_at: datetime
 
     class Config:
         orm_mode = True

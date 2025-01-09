@@ -1,9 +1,9 @@
 from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, Text, DateTime
 from sqlalchemy.orm import relationship
 from datetime import datetime
-
+from datetime import timedelta, timezone
 from .database import Base
-
+from . import config
 class Founder(Base):
     __tablename__ = 'founders'
     id = Column(Integer, primary_key=True, index=True)
@@ -39,7 +39,26 @@ class Project(Base):
     campaignDescription = Column(String)
     campaignTitle = Column(String)
     status = Column(String, default="pending", nullable=True)
+    fundsRaised = Column(Float, default=0.0, nullable=True)
     other_details = Column(Text, nullable=True)
+
+    def get_dict(self):
+        d  = self.__dict__
+        funds = 0.0 if not self.fundsRaised else self.fundsRaised
+        rsp_obj = {
+        "image_url": f"{config.HOST_ADDRESS}/static/" + self.image_url.split("/")[-1],
+        "proof_file_url": f"{config.HOST_ADDRESS}/static/" + self.pdf_document_path.split("/")[-1],
+        "investors": len(self.investors),
+        "daysRemaining" : (self.deadline - datetime.utcnow()).days,
+        "progress": (funds / self.target_amount) * 100,
+        "targetAmount": self.target_amount
+        }
+        if not self.status:
+            rsp_obj.update({"status":"pending"})
+        if not self.fundsRaised:
+            rsp_obj.update({"fundsRaised": 0.0})
+        d.update(rsp_obj)
+        return d
 
 
 
@@ -55,7 +74,7 @@ class Investor(Base):
     password = Column(String, nullable=False)
     investmentFocus = Column(String, nullable=True)
     investmentBudget = Column(String, nullable=True)
-    investmetSector = Column(String, nullable=True)
+    investmentSector = Column(String, nullable=True)
     investmentExperience = Column(String, nullable=True)
     linkedInProfile = Column(String, nullable=True)
     role = Column(String, nullable=True)
@@ -77,6 +96,7 @@ class Investment(Base):
 class Update(Base):
     __tablename__ = 'updates'
     id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=True, default="Lorem Epsum")
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)

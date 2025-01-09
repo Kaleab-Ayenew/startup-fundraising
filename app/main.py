@@ -22,7 +22,7 @@ from datetime import datetime
 
 from .database import Base, engine, get_db
 from .config import ADMIN_CREATION_TOKEN, STRIPE_SECRET_KEY, STATIC_FILES_DIR
-from . import models, schema, utils
+from . import models, schema, utils, auth
 
 # Create DB tables at startup (For dev/demo. In production, use migrations.)
 Base.metadata.create_all(bind=engine)
@@ -45,7 +45,7 @@ app.add_middleware(
 #------------------------
 @app.post("/token")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = authenticate_user(form_data.username, form_data.password)
+    user = authenticate_user(form_data.username, form_data.password, form_data.client_id)
     if not user:
         raise HTTPException(
             status_code=400,
@@ -55,6 +55,15 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(data={"sub": user["email"]}, expires_delta=access_token_expires)
     return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/signin")
+async def signin(data: schema.SignInSchema, db: Session = Depends(get_db)):
+    user_models = ["founder", "investor", "admin"]
+    for u in user_models:
+        if user:= auth.authenticate_user(email=data.email, password=data.password, user_type=u):
+            return user
+       
+    raise HTTPException(status_code=401, detail="We couldn't log you in.")
 
 # ------------------------------------------------------------------
 #  Admin Functions
@@ -153,10 +162,11 @@ def create_investor(investor_data: schema.InvestorCreate, db: Session = Depends(
     if existing:
         raise HTTPException(status_code=400, detail="Investor with this email already exists.")
     hashed_pw = utils.hash_password(investor_data.password)
+    data = investor_data.model_dump()
+    data.update({"role":"investor", "password":hashed_pw, "name": investor_data.fullName})
+    data.pop("fullName")
     new_investor = models.Investor(
-        name=investor_data.fullName,
-        email=investor_data.email,
-        password=hashed_pw,
+        **data,
         other_details=investor_data.model_dump_json()
 
     )
@@ -199,22 +209,17 @@ def delete_investor(investor_id: int, db: Session = Depends(get_db)):
 # ------------------------------------------------------------------
 #  CRUD for Project
 # ------------------------------------------------------------------
-@app.get("/projects")
+@app.get("/campaigns")
 def get_projects(db: Session = Depends(get_db)):
     """List all projects (for feed)."""
     projects = db.query(models.Project).all()
     response_data = []
     for p in list(projects):
-        response_obj = {
-        "image_url": "/static/" + p.image_url.split("/")[-1],
-        "proof_file_url": "/static/" + p.pdf_document_path.split("/")[-1],}
-        p.__dict__.update(response_obj)
-        response_data.append(p)
-
+        response_data.append(p.get_dict())
 
     return response_data
 
-@app.get("/projects/{project_id}")
+@app.get("/campaigns/{project_id}")
 def get_project_details(project_id: int, db: Session = Depends(get_db)):
     """Get project details by ID."""
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
@@ -226,27 +231,27 @@ def get_project_details(project_id: int, db: Session = Depends(get_db)):
         "proof_file_url": "/static/" + project.pdf_document_path.split("/")[-1],
 
     }
-    project.__dict__.update(response_obj)
+    response_data = project.get_dict()
 
-    return project
+    return response_data
 
 
-@app.post("/projects", status_code=status.HTTP_201_CREATED)
+@app.post("/campaigns", status_code=status.HTTP_201_CREATED)
 def create_project(
-    campaign_title: str = Form(...),
-    campaign_description: str = Form(...),
-    campaign_category: str = Form(...),
-    target_amount: float = Form(...),
-    funding_type: str = Form(...),
+    campaignTitle: str = Form(...),
+    campaignDescription: str = Form(...),
+    campaignCategory: str = Form(...),
+    targetAmount: float = Form(...),
+    fundingType: str = Form(...),
     deadline: str = Form(...),
-    min_investment: float = Form(...),
+    minInvestment: float = Form(...),
     email: str = Form(...),
     address: str = Form(...),
     phone: str = Form(...),
-    personalized_message: str = Form(None),
-    motivation_letter: str = Form(None),
-    proof_of_eligibility: UploadFile = File(...),
-    campaign_image: UploadFile = File(...),
+    personalizedMessage: str = Form(None),
+    motivationLetter: str = Form(None),
+    proofOfEligibility: UploadFile = File(...),
+    campaignImage: UploadFile = File(...),
     founder_id: int = 1,  # Replace with authentication logic
     db: Session = Depends(get_db),
 ):
@@ -260,36 +265,36 @@ def create_project(
 
     # Save the proof_of_eligibility file
     proof_file_path = os.path.join(
-        STATIC_FILES_DIR, f"proof_{datetime.now().strftime('%Y%m%d%H%M%S')}_{proof_of_eligibility.filename}"
+        STATIC_FILES_DIR, f"proof_{datetime.now().strftime('%Y%m%d%H%M%S')}_{proofOfEligibility.filename}"
     )
     with open(proof_file_path, "wb") as buffer:
-        shutil.copyfileobj(proof_of_eligibility.file, buffer)
+        shutil.copyfileobj(proofOfEligibility.file, buffer)
 
     # Save the campaign_image file
     image_file_path = os.path.join(
-        STATIC_FILES_DIR, f"image_{datetime.now().strftime('%Y%m%d%H%M%S')}_{campaign_image.filename}"
+        STATIC_FILES_DIR, f"image_{datetime.now().strftime('%Y%m%d%H%M%S')}_{campaignImage.filename}"
     )
     with open(image_file_path, "wb") as buffer:
-        shutil.copyfileobj(campaign_image.file, buffer)
+        shutil.copyfileobj(campaignImage.file, buffer)
 
     # Create a new project instance
     new_project = models.Project(
-        name=campaign_title,
-        description=campaign_description,
-        target_amount=target_amount,
+        name=campaignTitle,
+        description=campaignDescription,
+        target_amount=targetAmount,
         image_url=image_file_path,
         pdf_document_path=proof_file_path,
         founder_id=founder_id,
         deadline=deadline,
-        fundingType=funding_type,
-        minInvestment=min_investment,
+        fundingType=fundingType,
+        minInvestment=minInvestment,
         email=email,
         address=address,
         phone=phone,
-        personalizedMessage=personalized_message,
-        motivationLetter=motivation_letter,
-        campaignCategory=campaign_category,
-        campaignTitle=campaign_title,
+        personalizedMessage=personalizedMessage,
+        motivationLetter=motivationLetter,
+        campaignCategory=campaignCategory,
+        campaignTitle=campaignTitle,
         other_details=None,  # Set this to additional details if available
     )
 
@@ -297,18 +302,13 @@ def create_project(
     db.add(new_project)
     db.commit()
     db.refresh(new_project)
-    response_obj = {
-        "image_url": "/static/" + new_project.image_url.split("/")[-1],
-        "proof_file_url": "/static/" + new_project.pdf_document_path.split("/")[-1],
-
-    }
-    new_project.__dict__.update(response_obj)
+    
 
 
-    return new_project
+    return new_project.get_dict()
 
 
-@app.put("/projects/{project_id}", response_model=schema.ProjectOut)
+@app.put("/campaigns/{project_id}", response_model=schema.ProjectOut)
 def update_project(
     project_id: int,
     project_data: schema.ProjectUpdate,
@@ -326,12 +326,14 @@ def update_project(
         project.target_amount = project_data.target_amount
     if project_data.image_url is not None:
         project.image_url = project_data.image_url
+    if project_data.status is not None:
+        project.status = project_data.status
 
     db.commit()
     db.refresh(project)
     return project
 
-@app.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+@app.delete("/campaigns/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(project_id: int, db: Session = Depends(get_db)):
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
     if not project:
@@ -340,7 +342,7 @@ def delete_project(project_id: int, db: Session = Depends(get_db)):
     db.commit()
     return None
 
-@app.get("/projects/{project_id}/pdf", response_class=FileResponse)
+@app.get("/campaigns/{project_id}/pdf", response_class=FileResponse)
 def get_project_pdf(project_id: int, db: Session = Depends(get_db)):
     """
     Endpoint to download/view the PDF document for a project.
@@ -378,7 +380,7 @@ def create_investment(
     project = db.query(models.Project).filter(models.Project.id == investment_data.project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-
+    project.fundsRaised = project.fundsRaised + investment_data.amount
     new_investment = models.Investment(
         amount=investment_data.amount,
         investor_id=investor_id,
